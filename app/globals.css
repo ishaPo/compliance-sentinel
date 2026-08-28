@@ -572,6 +572,64 @@ button {
   white-space: nowrap;
 }
 
+.history-row-wrap {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.history-row-wrap:last-child {
+  border-bottom: none;
+}
+
+.history-row-wrap .history-row {
+  border-bottom: none;
+}
+
+.history-row-clickable {
+  cursor: pointer;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  border-radius: 6px;
+  transition: background-color 0.12s ease;
+}
+
+.history-row-clickable:hover {
+  background: var(--bg-panel-alt);
+}
+
+.expand-caret {
+  display: inline-block;
+  color: var(--text-faint);
+  margin-right: 5px;
+  transition: transform 0.15s ease;
+  font-size: 10px;
+}
+
+.expand-caret.open {
+  transform: rotate(90deg);
+}
+
+.history-row-body {
+  padding: 4px 4px 14px 21px;
+}
+
+.history-row-body .change-card {
+  background: var(--bg-inset);
+}
+
+.history-row-body .empty-state.small {
+  text-align: left;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.history-row-link {
+  color: var(--accent);
+}
+
 /* ---------- fatal / error banner ---------- */
 
 .error-banner {

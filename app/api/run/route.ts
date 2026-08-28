@@ -3,6 +3,7 @@ import { diffSections } from "@/lib/diff";
 import { interpretChanges } from "@/lib/interpret";
 import { appendCheckLog, appendVersion, getLatestVersion } from "@/lib/storage";
 import type { RunEvent, TrailEntry, VersionEntry } from "@/lib/types";
+import { canonicalizeUrl } from "@/lib/url";
 
 // This route does real network I/O (fetching the target page, calling an
 // LLM) and streams progress the whole time it runs — both reasons it must
@@ -196,7 +197,8 @@ function badRequest(message: string): Response {
 function normalizeUrl(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
-  return trimmed.length ? trimmed : null;
+  if (!trimmed.length) return null;
+  return canonicalizeUrl(trimmed);
 }
 
 // GET supports a plain browser EventSource (which can only issue GET

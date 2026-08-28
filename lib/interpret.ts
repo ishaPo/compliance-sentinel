@@ -10,25 +10,36 @@ import type {
 type Trail = (entry: Omit<TrailEntry, "timestamp">) => void;
 
 // Tried in order — if one model 404s, is deprecated, or is rate-limited,
-// the next is tried before falling back to OpenRouter entirely. Model
-// naming on Gemini's free tier has shifted over time, so this list leans on
-// long-standing, broadly-available IDs rather than betting everything on
-// one; if your Google AI Studio account shows different available model
-// names, add them here (most-preferred first).
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
+// the next is tried before falling back to OpenRouter entirely. Google
+// retired gemini-2.0-flash (shutdown June 1, 2026) and gemini-1.5-flash
+// (shutdown Sept 29, 2025) — this list is the current stable, free-tier
+// lineup per ai.google.dev/gemini-api/docs/models and .../deprecations as
+// of August 2026. Flash-Lite variants are tried first since they carry
+// lighter demand (and so a lower chance of a transient 503) than the
+// standard Flash models; if your Google AI Studio account shows different
+// available model names, update this list (most-preferred first).
+const GEMINI_MODELS = [
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+];
 
 // Ordered so OpenRouter tries each in turn if one is rate-limited or down —
 // this is OpenRouter's own documented `models` fallback-array feature
 // (see openrouter.ai/docs -> model routing), not something hand-rolled here.
-// All are free-tier ("...:free") models with no card required. OpenRouter's
-// free-model roster shifts month to month, so if these start 404ing, check
-// openrouter.ai/models filtered to "free" for current slugs.
+// IMPORTANT: OpenRouter's chat-completions endpoint rejects this array with
+// a 400 ("'models' array must have 3 items or fewer") past 3 entries — that
+// 400 was the actual cause of a real production failure, not a bad model
+// slug, so keep this at exactly 3. All are free-tier ("...:free") models
+// with no card required. OpenRouter's free-model roster shifts month to
+// month, so if these start 404ing, check openrouter.ai/models filtered to
+// "free" for current slugs.
 const OPENROUTER_MODELS = [
   "deepseek/deepseek-r1:free",
   "meta-llama/llama-3.3-70b-instruct:free",
   "deepseek/deepseek-v3:free",
-  "google/gemini-flash:free",
-  "mistral/mistral-small-24b:free",
 ];
 
 const OPENROUTER_TIMEOUT_MS = 20_000;

@@ -1,0 +1,26 @@
+{
+  "name": "compliance-sentinel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous web change-detection agent for pharma client-website compliance monitoring — built for the Indegene Associate Manager, Product Management (Applied AI) assignment.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "15.5.24",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "cheerio": "1.0.0",
+    "@vercel/kv": "3.0.0",
+    "@google/generative-ai": "0.21.0"
+  },
+  "devDependencies": {
+    "typescript": "5.7.2",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2"
+  }
+}

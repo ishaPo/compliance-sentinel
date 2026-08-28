@@ -87,10 +87,19 @@ function buildPrompt(changes: RawChange[]): string {
 
 - "classification": "content" (the actual wording/information changed) or "functional" (only markup/CSS/layout changed — a heuristic guess is provided based on a structural fingerprint; confirm it or override it if the before/after text suggests otherwise, e.g. a trivial punctuation-only edit could be closer to cosmetic than the heuristic suggests).
 - "severity": "none" | "low" | "medium" | "high" — how much this change matters from a pharma compliance/regulatory standpoint. Changes to safety information, boxed warnings, dosing, or efficacy claims are high severity. Cosmetic wording tweaks are low or none.
-- "interpretation": ONE short plain-English sentence explaining why this change might matter to a compliance reviewer (or that it doesn't).
-- "reasoning": one or two sentences justifying the classification and severity you chose.
+- "interpretation": ONE sentence a compliance reviewer can act on without reading the raw diff. It MUST start with a bracketed category tag from this fixed list, then the specific consequence — never restate what text changed, say why it matters (or plainly that it doesn't):
+    [Safety information] — a warning, contraindication, or adverse-reaction disclosure was added, removed, or weakened.
+    [Boxed warning] — the most serious FDA-mandated warning was touched at all.
+    [Dosing/administration] — dosing, administration route, or patient-selection criteria changed.
+    [Efficacy claim] — a claim about how well the product works was added, strengthened, or removed.
+    [Testimonial/case-study substantiation] — customer stories, case studies, or outcome statistics were added or removed; these typically need supporting data on file to remain defensible.
+    [Promotional fair balance] — benefit-heavy language moved out of proportion with risk/limitation language shown alongside it.
+    [HCP-access boundary] — content moved between HCP-gated and public-facing areas, or eligibility/gating language changed.
+    [No compliance concern] — cosmetic, navigational, or purely informational (e.g. contact info, unrelated marketing copy) with no regulatory angle.
+  Example: "[Testimonial/case-study substantiation] Four customer outcome case studies were removed — if this was a stated compliance concern (e.g. the underlying data could no longer be substantiated), that's a good sign; if it was routine content pruning, it's worth confirming with the site owner it wasn't accidental."
+- "reasoning": one or two sentences that justify the severity by naming the specific mechanism at stake for the category you chose (e.g. "case-study statistics without an on-file substantiation source create promotional liability" or "removing a contraindication changes what a prescriber sees as a safety risk") — do not just restate the before/after text again.
 
-This content is drawn from official prescribing-information-style language (indications, dosing, adverse reactions, boxed warnings) on an existing, already-published product page. You are reviewing it in a compliance-monitoring capacity, the same way a pharmacovigilance or regulatory affairs reviewer would — not generating new medical claims.
+This content is drawn from official prescribing-information-style language (indications, dosing, adverse reactions, boxed warnings) on an existing, already-published product page. You are reviewing it in a compliance-monitoring capacity, the same way a pharmacovigilance or regulatory affairs reviewer would — not generating new medical claims. Don't invent specific regulation or statute numbers you aren't certain of; refer to the general compliance principle by name instead.
 
 Changes (JSON):
 ${JSON.stringify(items, null, 2)}

@@ -9,16 +9,26 @@ import type {
 
 type Trail = (entry: Omit<TrailEntry, "timestamp">) => void;
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+// Tried in order — if one model 404s, is deprecated, or is rate-limited,
+// the next is tried before falling back to OpenRouter entirely. Model
+// naming on Gemini's free tier has shifted over time, so this list leans on
+// long-standing, broadly-available IDs rather than betting everything on
+// one; if your Google AI Studio account shows different available model
+// names, add them here (most-preferred first).
+const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
 
 // Ordered so OpenRouter tries each in turn if one is rate-limited or down —
 // this is OpenRouter's own documented `models` fallback-array feature
 // (see openrouter.ai/docs -> model routing), not something hand-rolled here.
-// All three are free-tier models with no card required.
+// All are free-tier ("...:free") models with no card required. OpenRouter's
+// free-model roster shifts month to month, so if these start 404ing, check
+// openrouter.ai/models filtered to "free" for current slugs.
 const OPENROUTER_MODELS = [
-  "google/gemini-2.0-flash-exp:free",
+  "deepseek/deepseek-r1:free",
   "meta-llama/llama-3.3-70b-instruct:free",
-  "mistralai/mistral-7b-instruct:free",
+  "deepseek/deepseek-v3:free",
+  "google/gemini-flash:free",
+  "mistral/mistral-small-24b:free",
 ];
 
 const OPENROUTER_TIMEOUT_MS = 20_000;
@@ -34,6 +44,16 @@ interface LlmChangeResult {
 interface ProviderOutcome {
   results: LlmChangeResult[];
   modelUsed: string;
+}
+
+/** Pulls a short, useful message out of whatever a failed call threw. */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message.slice(0, 300);
+  try {
+    return JSON.stringify(err).slice(0, 300);
+  } catch {
+    return String(err).slice(0, 300);
+  }
 }
 
 /**
@@ -59,6 +79,8 @@ function buildPrompt(changes: RawChange[]): string {
 - "interpretation": ONE short plain-English sentence explaining why this change might matter to a compliance reviewer (or that it doesn't).
 - "reasoning": one or two sentences justifying the classification and severity you chose.
 
+This content is drawn from official prescribing-information-style language (indications, dosing, adverse reactions, boxed warnings) on an existing, already-published product page. You are reviewing it in a compliance-monitoring capacity, the same way a pharmacovigilance or regulatory affairs reviewer would — not generating new medical claims.
+
 Changes (JSON):
 ${JSON.stringify(items, null, 2)}
 
@@ -66,53 +88,110 @@ Respond with ONLY a JSON object of this exact shape, one entry per change, same 
 {"changes": [{"sectionId": string, "classification": "content"|"functional", "severity": "none"|"low"|"medium"|"high", "interpretation": string, "reasoning": string}]}`;
 }
 
-async function callGemini(prompt: string): Promise<ProviderOutcome | null> {
+async function callGemini(prompt: string, trail: Trail): Promise<ProviderOutcome | null> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-
-  try {
-    const { GoogleGenerativeAI, SchemaType } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            changes: {
-              type: SchemaType.ARRAY,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  sectionId: { type: SchemaType.STRING },
-                  classification: { type: SchemaType.STRING, enum: ["content", "functional"] },
-                  severity: { type: SchemaType.STRING, enum: ["none", "low", "medium", "high"] },
-                  interpretation: { type: SchemaType.STRING },
-                  reasoning: { type: SchemaType.STRING },
-                },
-                required: ["sectionId", "classification", "severity", "interpretation", "reasoning"],
-              },
-            },
-          },
-          required: ["changes"],
-        },
-      },
-    });
-
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed?.changes)) return null;
-    return { results: parsed.changes, modelUsed: GEMINI_MODEL };
-  } catch {
+  if (!apiKey) {
+    trail({ action: "Gemini skipped", reasoning: "GEMINI_API_KEY is not set.", level: "warning" });
     return null;
   }
+
+  let sdk;
+  try {
+    sdk = await import("@google/generative-ai");
+  } catch (err) {
+    trail({ action: "Gemini SDK failed to load", detail: describeError(err), level: "error" });
+    return null;
+  }
+
+  const { GoogleGenerativeAI, SchemaType, HarmCategory, HarmBlockThreshold } = sdk;
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  const responseSchema = {
+    type: SchemaType.OBJECT,
+    properties: {
+      changes: {
+        type: SchemaType.ARRAY,
+        items: {
+          type: SchemaType.OBJECT,
+          properties: {
+            sectionId: { type: SchemaType.STRING },
+            classification: { type: SchemaType.STRING, enum: ["content", "functional"] },
+            severity: { type: SchemaType.STRING, enum: ["none", "low", "medium", "high"] },
+            interpretation: { type: SchemaType.STRING },
+            reasoning: { type: SchemaType.STRING },
+          },
+          required: ["sectionId", "classification", "severity", "interpretation", "reasoning"],
+        },
+      },
+    },
+    required: ["changes"],
+  };
+
+  // Prescribing-information language (hepatotoxicity, boxed warnings, adverse
+  // reaction rates) is exactly the kind of clinical/medical vocabulary that
+  // can trip a default "dangerous content" or "medical advice" safety
+  // threshold, even though this call is reviewing already-published,
+  // legitimate compliance text rather than generating new medical claims.
+  // Loosening these (but not disabling them entirely) reduces false-positive
+  // blocks on that vocabulary without touching categories unrelated to it.
+  const safetySettings = [
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  ];
+
+  for (const modelId of GEMINI_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelId,
+        safetySettings,
+        generationConfig: { responseMimeType: "application/json", responseSchema },
+      });
+
+      const result = await model.generateContent(prompt);
+
+      const blockReason = result.response.promptFeedback?.blockReason;
+      if (blockReason) {
+        trail({
+          action: `Gemini ${modelId} blocked the request`,
+          detail: `blockReason: ${blockReason}`,
+          reasoning: "The safety filter blocked this content rather than erroring — trying the next Gemini model.",
+          level: "warning",
+        });
+        continue;
+      }
+
+      const text = result.response.text();
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed?.changes)) {
+        trail({
+          action: `Gemini ${modelId} returned an unexpected shape`,
+          detail: text.slice(0, 200),
+          level: "warning",
+        });
+        continue;
+      }
+      return { results: parsed.changes, modelUsed: modelId };
+    } catch (err) {
+      trail({
+        action: `Gemini ${modelId} failed`,
+        detail: describeError(err),
+        reasoning: "Trying the next Gemini model in the fallback list before moving to OpenRouter.",
+        level: "warning",
+      });
+    }
+  }
+
+  return null;
 }
 
-async function callOpenRouter(prompt: string): Promise<ProviderOutcome | null> {
+async function callOpenRouter(prompt: string, trail: Trail): Promise<ProviderOutcome | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) {
+    trail({ action: "OpenRouter skipped", reasoning: "OPENROUTER_API_KEY is not set.", level: "warning" });
+    return null;
+  }
 
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -132,30 +211,57 @@ async function callOpenRouter(prompt: string): Promise<ProviderOutcome | null> {
       signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      trail({
+        action: "OpenRouter request failed",
+        detail: `${res.status} ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 250)}` : ""}`,
+        reasoning:
+          res.status === 429
+            ? "Rate-limited — OpenRouter's free tier caps unpaid accounts at roughly 50 requests/day and 20/minute."
+            : "See the response body above for the specific reason.",
+        level: "error",
+      });
+      return null;
+    }
 
     const data = await res.json();
     const content: string | undefined = data?.choices?.[0]?.message?.content;
-    if (!content) return null;
+    if (!content) {
+      trail({
+        action: "OpenRouter returned no content",
+        detail: JSON.stringify(data).slice(0, 250),
+        level: "error",
+      });
+      return null;
+    }
 
     const parsed = JSON.parse(content);
     const arr: LlmChangeResult[] | null = Array.isArray(parsed?.changes) ? parsed.changes : null;
-    if (!arr) return null;
+    if (!arr) {
+      trail({ action: "OpenRouter output unparseable", detail: content.slice(0, 250), level: "error" });
+      return null;
+    }
 
     const modelUsed = data?.model ? `${data.model} (openrouter fallback)` : "openrouter fallback";
     return { results: arr, modelUsed };
-  } catch {
+  } catch (err) {
+    trail({ action: "OpenRouter request threw", detail: describeError(err), level: "error" });
     return null;
   }
 }
 
 /**
  * Interprets a run's raw changes via the provider chain: Gemini direct
- * first (native structured-output mode, generous free quota), OpenRouter's
- * free-model fallback array second (only reached if Gemini is missing a
- * key, rate-limited, or errors), and a defensive "no interpretation
- * available" degradation if both are unreachable — the run still completes
- * and still produces a report, just without narrative interpretation.
+ * first, trying each model in GEMINI_MODELS in turn (native structured-
+ * output mode, generous free quota on each), then OpenRouter's free-model
+ * fallback array (only reached if every Gemini model failed), and a
+ * defensive "no interpretation available" degradation if all of that is
+ * unreachable — the run still completes and still produces a report, just
+ * without narrative interpretation. Every attempt logs its own specific
+ * failure reason to the trail rather than a generic "unavailable" message,
+ * so a real problem (bad key, safety block, rate limit, deprecated model)
+ * is visible without guesswork.
  */
 export async function interpretChanges(changes: RawChange[], trail: Trail): Promise<ChangeReport> {
   if (changes.length === 0) {
@@ -166,26 +272,26 @@ export async function interpretChanges(changes: RawChange[], trail: Trail): Prom
 
   trail({
     action: "Requesting interpretation from Gemini",
-    detail: GEMINI_MODEL,
+    detail: GEMINI_MODELS.join(" → "),
     reasoning: `Sending all ${changes.length} changed section(s) in a single batched call rather than one call per change, to stay well within serverless function time limits.`,
     level: "info",
   });
 
-  let outcome = await callGemini(prompt);
+  let outcome = await callGemini(prompt, trail);
 
   if (!outcome) {
     trail({
-      action: "Gemini unavailable — falling back to OpenRouter",
-      reasoning: "Gemini produced no usable result (missing key, rate limit, or an error). Falling back to OpenRouter's free-model pool, which tries each model in its fallback list in turn.",
+      action: "All Gemini models failed — falling back to OpenRouter",
+      reasoning: "See the Gemini failure(s) above for the specific reason. Falling back to OpenRouter's free-model pool.",
       level: "warning",
     });
-    outcome = await callOpenRouter(prompt);
+    outcome = await callOpenRouter(prompt, trail);
   }
 
   if (!outcome) {
     trail({
       action: "No LLM interpretation available this run",
-      reasoning: "Both Gemini and OpenRouter were unreachable (missing keys, rate-limited, or down). Degrading to heuristic-only classification with no narrative interpretation rather than failing the run.",
+      reasoning: "Every provider attempt above failed. Degrading to heuristic-only classification with no narrative interpretation rather than failing the run.",
       level: "error",
     });
   } else {

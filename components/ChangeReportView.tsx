@@ -90,7 +90,11 @@ export function ChangeReportView({ running, errorMessage, outcome, version }: Pr
   );
 }
 
-function ChangeCard({ change }: { change: InterpretedChange }) {
+// Exported so VersionHistoryView can reuse the exact same card rendering for
+// a past saved version's report — the "expand a history row to see the full
+// interpretation/reasoning/model" detail is the same shape of data as the
+// live run's report, so it gets the same component rather than a re-implementation.
+export function ChangeCard({ change }: { change: InterpretedChange }) {
   const [expanded, setExpanded] = useState(false);
 
   return (

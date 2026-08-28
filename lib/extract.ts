@@ -188,10 +188,24 @@ export async function extractPage(targetUrl: string, trail: Trail): Promise<Extr
     });
   } else {
     const stopTags = new Set(["H1", "H2", "H3"]);
+    // Tracks how many times each slug has been seen so far in this pass, so
+    // two headings with identical text (common on marketing pages that
+    // render a short "eyebrow" heading directly above the real heading with
+    // the same words, or a duplicate mobile/desktop layout) get distinct
+    // ids instead of colliding. Without this, both sections would be pushed
+    // under the same id, later collapsed to a single entry by the id-keyed
+    // Maps in diffSections, and compared against the wrong counterpart on
+    // every single run — surfacing the same "change" forever even when
+    // nothing on the page actually changes. See "Known limitations" in
+    // README.md for how this was diagnosed.
+    const seenSlugs = new Map<string, number>();
 
     headings.forEach((el, i) => {
       const heading = normalizeWhitespace($(el).text());
-      const id = slugify(heading) || `section-${i}`;
+      const baseId = slugify(heading) || `section-${i}`;
+      const occurrence = seenSlugs.get(baseId) ?? 0;
+      seenSlugs.set(baseId, occurrence + 1);
+      const id = occurrence === 0 ? baseId : `${baseId}-${occurrence + 1}`;
 
       // Find the next heading anywhere after this one, to use as a stop boundary.
       const nextHeading = $(el)

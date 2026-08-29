@@ -27,7 +27,7 @@ export default function Page() {
 
   const [historyVersions, setHistoryVersions] = useState<VersionEntry[]>([]);
   const [historyCheckLog, setHistoryCheckLog] = useState<CheckLogEntry[]>([]);
-  const [usingRealStorage, setUsingRealStorage] = useState(false);
+  const [usingRealStorage, setUsingRealStorage] = useState<boolean | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
@@ -132,7 +132,7 @@ export default function Page() {
           <span className="header-subtitle">Autonomous change detection for pharma HCP web pages</span>
         </div>
         <span className={`storage-indicator ${usingRealStorage ? "real" : ""}`}>
-          storage: {usingRealStorage ? "Vercel KV" : "in-memory (dev fallback)"}
+          storage: {usingRealStorage === null ? "checking…" : usingRealStorage ? "Vercel KV" : "in-memory (dev fallback)"}
         </span>
       </div>
 
